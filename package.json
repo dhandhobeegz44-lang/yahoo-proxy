@@ -1,0 +1,13 @@
+{
+  "name": "yahoo-finance-proxy",
+  "version": "1.0.0",
+  "description": "Lightweight Yahoo Finance proxy for portfolio tracker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
