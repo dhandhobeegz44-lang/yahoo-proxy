@@ -171,9 +171,70 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Earnings date: GET /earnings?symbol=AAPL
+  // Returns next earnings date from Yahoo Finance quoteSummary calendarEvents module
+  if (parsedUrl.pathname === '/earnings') {
+    const symbol = parsedUrl.searchParams.get('symbol');
+    if (!symbol) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing symbol' })); return; }
+
+    // Check cache (TTL 6 hours for earnings dates)
+    const eKey = 'earnings_' + symbol;
+    const eCached = cache.get(eKey);
+    if (eCached && Date.now() - eCached.ts < 6 * 60 * 60 * 1000) {
+      res.writeHead(200);
+      res.end(JSON.stringify({ ...eCached.data, cached: true }));
+      return;
+    }
+
+    try {
+      const result = await new Promise((resolve, reject) => {
+        const url = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=calendarEvents,defaultKeyStatistics`;
+        const options = {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+          },
+          timeout: 10000,
+        };
+        const req = https.get(url, options, (r) => {
+          let data = '';
+          r.on('data', chunk => data += chunk);
+          r.on('end', () => {
+            try {
+              const json = JSON.parse(data);
+              const cal = json?.quoteSummary?.result?.[0]?.calendarEvents;
+              const kstat = json?.quoteSummary?.result?.[0]?.defaultKeyStatistics;
+              const earningsDates = cal?.earnings?.earningsDate || [];
+              // earningsDate is array of {raw: timestamp, fmt: "2026-03-17"}
+              const next = earningsDates.find(d => d.raw * 1000 > Date.now() - 24*60*60*1000);
+              const epsEst = cal?.earnings?.earningsAverage?.raw ?? null;
+              const epsActual = kstat?.trailingEps?.raw ?? null;
+              resolve({
+                symbol,
+                earningsDate: next?.fmt || null,
+                earningsTimestamp: next?.raw || null,
+                epsEstimate: epsEst,
+                trailingEps: epsActual,
+              });
+            } catch(e) { reject(e); }
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      });
+      cache.set(eKey, { data: result, ts: Date.now() });
+      res.writeHead(200);
+      res.end(JSON.stringify(result));
+    } catch(e) {
+      res.writeHead(200);
+      res.end(JSON.stringify({ symbol, earningsDate: null, error: e.message }));
+    }
+    return;
+  }
+
   // 404
   res.writeHead(404);
-  res.end(JSON.stringify({ error: 'Not found. Use /quote?symbol=AAPL or /quotes?symbols=AAPL,MSFT' }));
+  res.end(JSON.stringify({ error: 'Not found. Use /quote?symbol=AAPL, /quotes?symbols=AAPL,MSFT, or /earnings?symbol=AAPL' }));
 });
 
 server.listen(PORT, () => {
